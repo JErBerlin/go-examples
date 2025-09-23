@@ -1,0 +1,154 @@
+openapi: 3.0.3
+info:
+  title: Widgets & Payments API
+  description: |
+    Stdlib-only HTTP API for generic widgets and payments with in-memory storage.
+
+    Endpoints:
+      - POST /widgets        : create a widget (non-idempotent)
+      - GET  /widgets        : list widgets
+      - GET  /widgets/{id}   : fetch a widget by ID
+      - POST /payments       : create a payment (idempotent via Idempotency-Key)
+      - GET  /payments/{id}  : fetch a payment by ID
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /widgets:
+    post:
+      summary: Create widget (non-idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              description: URI of the created widget
+              schema: { type: string, example: "/widgets/abc123" }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Widget'
+        '400':
+          description: Bad Request
+        '405':
+          description: Method Not Allowed
+    get:
+      summary: List widgets
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Widget'
+        '405':
+          description: Method Not Allowed
+  /widgets/{id}:
+    get:
+      summary: Get widget by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Widget'
+        '404':
+          description: Not Found
+        '405':
+          description: Method Not Allowed
+  /payments:
+    post:
+      summary: Create payment (idempotent via Idempotency-Key)
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+          description: Same key must be reused to obtain the exact same result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, currency, method]
+              properties:
+                amount:
+                  type: integer
+                  minimum: 1
+                currency:
+                  type: string
+                  enum: [EUR, USD, GBP]
+                method:
+                  type: string
+                  enum: [card, bank]
+      responses:
+        '201':
+          description: Created (or cached result)
+          headers:
+            Location:
+              description: URI of the created payment
+              schema: { type: string, example: "/payments/def456" }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Bad Request
+        '405':
+          description: Method Not Allowed
+  /payments/{id}:
+    get:
+      summary: Get payment by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '404':
+          description: Not Found
+        '405':
+          description: Method Not Allowed
+components:
+  schemas:
+    Widget:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, example: "f1e2d3c4b5a697887766554433221100" }
+        name: { type: string, example: "gizmo" }
+    Payment:
+      type: object
+      required: [id, amount, currency, method, status]
+      properties:
+        id: { type: string, example: "0a9b8c7d6e5f40302010010203040506" }
+        amount: { type: integer, example: 1499 }
+        currency: { type: string, enum: [EUR, USD, GBP], example: EUR }
+        method: { type: string, enum: [card, bank], example: card }
+        status: { type: string, example: processed }
+
