@@ -1,0 +1,9 @@
+go 1.23.2
+
+use (
+	./ch9bank1
+	./ch9bank2
+	./ch9bank3
+	./ch9bank4
+	./postapi
+)
