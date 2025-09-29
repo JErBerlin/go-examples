@@ -3,7 +3,7 @@ package main
 import (
 	"sync"
 
-	"github.com/jerberlin/examples-ch9bank4/bank"
+	"github.com/jerberlin/go-examples/ch9bank4/bank"
 )
 
 func main() {
