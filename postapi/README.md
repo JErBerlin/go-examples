@@ -14,9 +14,8 @@ The server listens on :8080
 ## Endpoints and Examples
 Create Widget (non-idempotent)
 ```bash
-curl -i -X POST http://localhost:8080/widgets
-
--H 'Content-Type: application/json'
+curl -i -X POST http://localhost:8080/widgets \
+-H 'Content-Type: application/json' \
 -d '{"name":"gizmo"}'
 ```
 
@@ -33,20 +32,20 @@ curl -s http://localhost:8080/widgets/<ID>
 Create Payment (idempotent via Idempotency-Key)
 First attempt:
 ```bash
-curl -i -X POST http://localhost:8080/payments
-
--H 'Content-Type: application/json'
--H 'Idempotency-Key: abc-123'
--d '{"amount":1499,"currency":"EUR","method":"card"}'
+curl -i -X POST http://localhost:8080/payments \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: abc-123' \
+  -d '{"amount":1499,"currency":"EUR","method":"card"}' \
+  -w "\nTime: %{time_total}s\n"
 ```
 
-Repeat with the same key (returns same 201, same body/Location):
+Repeat with the same key (returns same 201, same body/Location, possibly in shorter time):
 ```bash
-curl -i -X POST http://localhost:8080/payments
-
--H 'Content-Type: application/json'
--H 'Idempotency-Key: abc-123'
--d '{"amount":1499,"currency":"EUR","method":"card"}'
+curl -i -X POST http://localhost:8080/payments \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: abc-123' \
+  -d '{"amount":1499,"currency":"EUR","method":"card"}' \
+  -w "\nTime: %{time_total}s\n"
 ```
 
 Get Payment by ID
