@@ -67,7 +67,7 @@ Ensure $(go env GOPATH)/bin is on your PATH.
 # Web UI for viewing documentation
 From the project root:
 ```bash
-GODOC_CHDIR=1 godoc -http=:6060
+godoc -http=:6060
 ```
 
 Then open in your browser:
@@ -75,17 +75,17 @@ Then open in your browser:
 Package index: 
 `http://localhost:6060/pkg/`
 
-Navigate to your module/package (look for “main” under your module path).
+Navigate to the module/package (look for “postapi”).
 
 # CLI output for viewing documentation
 From the project root, for example:
 
 ```bash
-godoc .
-godoc . Payment
-godoc . Widget
-godoc . createWidget
-godoc . createPayment
+go doc .
+go doc . Payment
+go doc . Widget
+go doc . createWidget
+go doc . createPayment
 ```
 
 ## Notes
