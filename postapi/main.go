@@ -25,6 +25,7 @@ The problem is that the memory grows with distinct keys and outdated entries are
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -141,11 +142,11 @@ func createWidget(w http.ResponseWriter, r *http.Request) {
 
 	// persist in memory, needs locking
 	muWidgets.Lock()
-	widgets[id] = widgets
+	widgets[id] = widget
 	muWidgets.Unlock()
 
 	// set location header to URI of new resource
-	w.Header().Set("Location", "/widget/+id")
+	w.Header().Set("Location", "/widgets/"+id)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(widget)
@@ -170,7 +171,7 @@ func listWidgets(w http.ResponseWriter, r *http.Request) {
 }
 
 // getWidget fetches a single widget by its ID.
-func listWidgets(w http.ResponseWriter, r *http.Request) {
+func getWidget(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -242,7 +243,7 @@ func createPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := processPayment(r.Context(), in.Amount, stringsToUpper(in.Currency), strings.ToLower(in.Method))
+	p := processPayment(r.Context(), in.Amount, strings.ToUpper(in.Currency), strings.ToLower(in.Method))
 	storeByKey(key, p)
 
 	w.Header().Set("Location", "/payments/"+p.ID)
@@ -252,7 +253,7 @@ func createPayment(w http.ResponseWriter, r *http.Request) {
 }
 
 // getPayment fetches a payment by ID.
-func getPayment(w htt.ResponseWriter, r *http.Request) {
+func getPayment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -260,7 +261,7 @@ func getPayment(w htt.ResponseWriter, r *http.Request) {
 
 	id := strings.TrimPrefix(r.URL.Path, "/payments/")
 	if id == "" {
-		writeError(w, httpStatusBadRequest, "missing id")
+		writeError(w, http.StatusBadRequest, "missing id")
 		return
 	}
 
@@ -273,13 +274,13 @@ func getPayment(w htt.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOk, p)
+	writeJSON(w, http.StatusOK, p)
 
 }
 
 // processPayment simulates processing and persists the Payment in memory.
 // In a real system, this would perform actual processing and handle failures.
-func processPayment(ctx contex.Context, amount int, currency, method string) Payment {
+func processPayment(ctx context.Context, amount int, currency, method string) Payment {
 	id := newID()
 	p := Payment{
 		ID:       id,
