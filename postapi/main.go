@@ -52,10 +52,10 @@ var (
 
 // main intialise the routing and starts the HTTP server on :8080.
 func main() {
-	registerRoutes()
+	mux := registerRoutes()
 
 	log.Println("listening on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8080", mux); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -315,40 +315,17 @@ func storeByKey(key string, p Payment) {
 // HTTP Server
 
 // registerRoutes configures http routes
-func registerRoutes() {
-	http.HandleFunc("/widgets", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			createWidget(w, r)
-		case http.MethodGet:
-			listWidgets(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+func registerRoutes() *http.ServeMux {
+	mux := http.NewServeMux()
 
-	http.HandleFunc("/widgets/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		getWidget(w, r)
-	})
+	// Widgets
+	mux.HandleFunc("POST /widgets", createWidget)
+	mux.HandleFunc("GET /widgets", listWidgets)
+	mux.HandleFunc("GET /widgets/{id}", getWidget)
 
-	http.HandleFunc("/payments", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			createPayment(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	// Payments
+	http.HandleFunc("POST /payments", createPayment)
+	http.HandleFunc("GET /payments/", getPayment)
 
-	http.HandleFunc("/payments/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		getPayment(w, r)
-	})
+	return mux
 }
