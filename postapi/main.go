@@ -303,8 +303,8 @@ func registerRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /widgets/{id}", getWidget)
 
 	// Payments
-	http.HandleFunc("POST /payments", createPayment)
-	http.HandleFunc("GET /payments/", getPayment)
+	mux.HandleFunc("POST /payments", createPayment)
+	mux.HandleFunc("GET /payments/{id}", getPayment)
 
 	return mux
 }
