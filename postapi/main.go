@@ -270,6 +270,7 @@ func processPayment(ctx context.Context, amount int, currency, method string) Pa
 	}
 
 	muPayments.Lock()
+	simulateDelay() // delay when storing to external DB
 	payments[id] = p
 	muPayments.Unlock()
 
@@ -289,6 +290,11 @@ func storeByKey(key string, p Payment) {
 	muIdem.Lock()
 	idemCache[key] = p
 	muIdem.Unlock()
+}
+
+// simulateDelay introduces a delay to simulate a real external DB (not in-memory)
+func simulateDelay() {
+	time.Sleep(100 * time.Millisecond)
 }
 
 // HTTP Server
