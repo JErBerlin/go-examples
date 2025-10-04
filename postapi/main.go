@@ -89,6 +89,13 @@ func newID() string {
 	return hex.EncodeToString([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
 }
 
+func bindJSON(r *http.Request, dst any) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	return dec.Decode(dst)
+}
+
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -123,9 +130,7 @@ func createWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// parse input
-	var in struct{ Name string }
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := bindJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "bad request")
 		return
 	}
@@ -143,11 +148,10 @@ func createWidget(w http.ResponseWriter, r *http.Request) {
 	widgets[id] = widget
 	muWidgets.Unlock()
 
-	// set location header to URI of new resource
 	w.Header().Set("Location", "/widgets/"+id)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(widget)
+	_ = json.NewEncoder(w).Encode(widget) // ignoring possible encode error
 }
 
 // listWidgets returns all widgets currently held in memory.
@@ -224,7 +228,7 @@ func createPayment(w http.ResponseWriter, r *http.Request) {
 		Currency string `json:"currency"`
 		Method   string `json:"method:`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := bindJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "bad request")
 		return
 	}
@@ -247,7 +251,7 @@ func createPayment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Location", "/payments/"+p.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(p)
+	_ = json.NewEncoder(w).Encode(p) // ignoring possible encode error
 }
 
 // getPayment fetches a payment by ID.
