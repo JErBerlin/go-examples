@@ -35,8 +35,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -137,7 +135,7 @@ func createWidget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// we generate a new UUID for every posted resource (not idempotent)
-	id := uuid.New().String()
+	id := newID()
 	widget := Widget{ID: id, Name: in.Name}
 
 	// persist in memory, needs locking
