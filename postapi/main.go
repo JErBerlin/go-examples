@@ -125,11 +125,9 @@ func validateCurrency(c string) bool {
 // createWidget creates a new widget resource.
 // It is a not idempotent post resource method and it returns the location and body of the new created resource.
 func createWidget(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	var in struct {
+		Name string
 	}
-
 	if err := bindJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "bad request")
 		return
@@ -156,11 +154,6 @@ func createWidget(w http.ResponseWriter, r *http.Request) {
 
 // listWidgets returns all widgets currently held in memory.
 func listWidgets(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
 	muWidgets.RLock()
 	// make a copy of the widgets to be serialised, this minimise time of locking
 	out := make([]Widget, 0, len(widgets))
@@ -174,13 +167,8 @@ func listWidgets(w http.ResponseWriter, r *http.Request) {
 
 // getWidget fetches a single widget by its ID.
 func getWidget(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	id := strings.TrimPrefix(r.URL.Path, "/widgets/")
-	if id == "" {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
 		writeError(w, http.StatusBadRequest, "id is required")
 	}
 
@@ -201,13 +189,8 @@ func getWidget(w http.ResponseWriter, r *http.Request) {
 // createPayment produces a new payment ensuring idempotency.
 // An idempotency key must be provided in the request to look up in cached results.
 func createPayment(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	key := r.Header.Get("Idempotency-Key")
-	if key == "" {
+	if strings.TrimSpace(key) == "" {
 		writeError(w, http.StatusBadRequest, "missing idempotency key")
 		return
 	}
@@ -241,7 +224,7 @@ func createPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(in.Method) == "" {
-		writeError(w, http.StatusBadRequest, "this payment method is ot allowed")
+		writeError(w, http.StatusBadRequest, "this payment method is not allowed")
 		return
 	}
 
@@ -256,13 +239,8 @@ func createPayment(w http.ResponseWriter, r *http.Request) {
 
 // getPayment fetches a payment by ID.
 func getPayment(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	id := strings.TrimPrefix(r.URL.Path, "/payments/")
-	if id == "" {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
 		writeError(w, http.StatusBadRequest, "missing id")
 		return
 	}
@@ -277,7 +255,6 @@ func getPayment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, p)
-
 }
 
 // processPayment simulates processing and persists the Payment in memory.
