@@ -1,0 +1,432 @@
+openapi: 3.1.0
+info:
+  title: Fit Sessions & Users API
+  description: |
+    HTTP API for the managing of sessions and users of intelligent fitness machines users.
+    Unknown fields are rejected for all request/response bodies.
+    
+    Endpoints
+      - POST /sessions 
+      - POST /sessions/{sessionID}/stop
+      - POST /sessions/{sessionID}/sets
+      - GET /users/{userID}/summaries
+
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+paths:
+  /sessions:
+    post:
+      summary: Start a new session
+      description: Rejects unknown fields in request.
+      requestBody:
+        required: true
+        content:
+          application/json; charset=utf-8;
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userID, machineID]
+              properties:
+                userID:  { type: string, example: "u_123" }
+                machineID: { type: string, example: "m_rower_9" }
+              example:
+                userID: "u_123"
+                machineID: "m_rower_9"
+         responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              description: URI of the created session
+              schema: { type: string, example: "/sessions/s_abc123" }
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Session" }
+              example:
+                id: "s_abc123"
+                userID: "u_123"
+                machineID: "m_rower_9"
+                startedAt: "2025-10-04T05:00:00Z"
+                setsCount: 0
+        "400":
+          description: Validation error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "validation_error", code: "400", details: { field: "userID" } }
+        "401":
+          description: Unauthorized
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unauthorized", code: "401" }
+        "403":
+          description: Forbidden
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "forbidden", code: "403" }
+        "404":
+          description: Unknown user or machine
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_found", code: "404" }
+        "500":
+          description: Server error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "internal_error", code: "500" }  
+
+  /sessions/{sessionID}/stop:
+    post:
+      summary: Stop a session
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Final session (ended)
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Session" }
+              example:
+                id: "s_abc123"
+                userID: "u_123"
+                machineID: "m_rower_9"
+                startedAt: "2025-10-04T05:00:00Z"
+                endedAt: "2025-10-04T06:00:00Z"
+                setsCount: 3
+        "400":
+          description: Already stopped
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "already_stopped", code: "400" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unauthorized", code: "401" }
+        "403":
+          description: Forbidden
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "forbidden", code: "403" }
+        "404":
+          description: Session not found
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_found", code: "404" }
+        "409":
+          description: Conflict
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "conflict", code: "409" }
+        "500":
+          description: Server error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "internal_error", code: "500" }
+
+  /sessions/{sessionID}/stop:
+    post:
+      summary: Stop a session
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Final session (ended)
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Session" }
+              example:
+                id: "s_abc123"
+                userID: "u_123"
+                machineID: "m_rower_9"
+                startedAt: "2025-10-04T05:00:00Z"
+                endedAt: "2025-10-04T06:00:00Z"
+                setsCount: 3
+        "400":
+          description: Already stopped
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "already_stopped", code: "400" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unauthorized", code: "401" }
+        "403":
+          description: Forbidden
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "forbidden", code: "403" }
+        "404":
+          description: Session not found
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_found", code: "404" }
+        "409":
+          description: Conflict
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "conflict", code: "409" }
+        "500":
+          description: Server error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "internal_error", code: "500" }
+
+  /sessions/{sessionID}/sets:
+    post:
+      summary: Record a workout set in a session
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json; charset=utf-8:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/WorkoutSet"
+                - type: object
+                  properties:
+                    id: { readOnly: true }
+                  required: [exercise, reps, weightKg, durationSec, timestamp]
+            example:
+              exercise: "bench_press"
+              reps: 10
+              weightKg: 60.0
+              durationSec: 45
+              metrics: [ { type: "hr", value: 128, unit: "bpm" } ]
+              timestamp: "2025-10-04T05:12:33Z"
+      responses:
+        "201":
+          description: Created set
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/WorkoutSet" }
+              example:
+                id: "ws_001"
+                exercise: "bench_press"
+                reps: 10
+                weightKg: 60.0
+                durationSec: 45
+                metrics: [ { type: "hr", value: 128, unit: "bpm" } ]
+                timestamp: "2025-10-04T05:12:33Z"
+        "400":
+          description: Validation error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "validation_error", code: "400" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unauthorized", code: "401" }
+        "403":
+          description: Forbidden
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "forbidden", code: "403" }
+        "404":
+          description: Session not found
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_found", code: "404" }
+        "409":
+          description: Session already stopped
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "session_stopped", code: "409" }
+        "500":
+          description: Server error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "internal_error", code: "500" }
+
+  /users/{userID}/summaries:
+    get:
+      summary: Paged workout summaries by user
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Summary page
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/SummaryPage" }
+              example:
+                items:
+                  - date: "2025-10-03"
+                    totalWorkouts: 2
+                    totalReps: 150
+                    totalWeightKg: 4800.0
+                    avgHR: 122
+                next_cursor: "eyJvZmZzZXQiOjIwMH0="
+        "400":
+          description: Bad cursor or limit
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "invalid_query", code: "400", details: { limit: "must be 1..100" } }
+        "401":
+          description: Unauthorized
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unauthorized", code: "401" }
+        "403":
+          description: Forbidden
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "forbidden", code: "403" }
+        "404":
+          description: User not found
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_found", code: "404" }
+        "500":
+          description: Server error
+          content:
+            application/json; charset=utf-8:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "internal_error", code: "500" }
+
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: string, example: "u_123"}
+        name: { type: string, example: "Jeremy"}
+        createdAt: { type: string, example: "2025-10-01T10:00:00Z" }
+
+    Machine:
+      type: object
+      required: [id, model, createdAt]
+      properties:
+        id: { type: string, example: "m_rower_9" }
+        model:     { type: string, example: "Concept2 PM5" }
+        location:  { type: string, nullable: true, example: "Gym A - Row Zone" }
+        createdAt: { type: string, format: date-time, example: "2025-10-01T09:00:00Z" }
+
+    Session:
+      type: object
+      required: [id, userID, machineID, startedAt, setsCount]
+      properties:
+        id:         { type: string, example: "s_abc123" }
+        userID:     { type: string, example: "u_123" }
+        machineID:  { type: string, example: "m_rower_9" }
+        startedAt:  { type: string, format: date-time, example: "2025-10-04T05:00:00Z" }
+        endedAt:    { type: string, format: date-time, nullable: true, example: "2025-10-04T06:00:00Z" }
+        setsCount:  { type: integer, minimum: 0, example: 3 }
+
+    Metric:
+      type: object
+      required: [type, value, unit]
+      properties:
+        type:
+          type: string
+          enum: [reps, weight, hr, duration]
+          example: hr
+        value: { type: number, example: 128 }
+        unit:  { type: string, example: "bpm" }
+
+    WorkoutSet:
+      type: object
+      required: [exercise, reps, weightKg, durationSec, timestamp]
+      properties:
+        id:          { type: string, readOnly: true, example: "ws_001" }
+        exercise:    { type: string, example: "bench_press" }
+        reps:        { type: integer, minimum: 0, example: 10 }
+        weightKg:    { type: number, minimum: 0, example: 60.0 }
+        durationSec: { type: integer, minimum: 0, example: 45 }
+        metrics:
+          type: array
+          items: { $ref: "#/components/schemas/Metric" }
+        timestamp:   { type: string, format: date-time, example: "2025-10-04T05:12:33Z" }
+
+    SummaryItem:
+      type: object
+      required: [date, totalWorkouts, totalReps, totalWeightKg]
+      properties:
+        date:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          example: "2025-10-03"
+        totalWorkouts: { type: integer, minimum: 0, example: 2 }
+        totalReps:     { type: integer, minimum: 0, example: 15 }
+        totalWeightKg: { type: number,  minimum: 0, example: 48.0 }
+        avgHR:         { type: integer, minimum: 0, nullable: true, example: 122 }
+
+    SummaryPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SummaryItem" }
+        next_cursor: { type: string, nullable: true, example: "eyJvZmZzZXQiOjIwMH0=" }
+
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error:   { type: string, example: "validation_error" }
+        code:    { type: string, example: "400" }
+        details: { type: object, additionalProperties: true }
