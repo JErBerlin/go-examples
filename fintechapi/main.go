@@ -214,35 +214,54 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 	}
 
 	// lookup in cache when idempotency key is present
+	status := http.StatusAccepted
 	if key != "" {
-		if rec, ok := loadByKey(key, store); ok {
+		store.MuTransactions.Lock()
+		defer store.MuTransactions.Unlock()
+		if rec, ok := store.idemCache[key]; ok {
 			// error conflict if the new payload different from cached payload
 			if rec.Hash != fp {
 				writeError(w, http.StatusConflict, "idempotency key reuse with different payload")
 				return
 			}
-
-			// else return the original result
+			// else return the original result exactly
 			w.Header().Set("Location", "/transactions/"+rec.Tr.ID)
 			writeJSON(w, rec.StatusCode, rec.Tr)
 			return
 		}
-	}
 
-	t, err := processNewTransaction(in.FromAccountID, in.ToAccountID, in.Amount, store)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "transaction could not be accepted for processing")
+		// cache miss: create transaction and store it while lock
+		t := Transaction{
+			ID:            newID(),
+			FromAccountID: in.FromAccountID,
+			ToAccountID:   in.ToAccountID,
+			Amount:        in.Amount,
+			At:            time.Now().UTC(),
+			Status:        StatusPending,
+		}
+		store.Transactions[t.ID] = t
+		store.idemCache[key] = idemRecord{Hash: fp, Tr: t, StatusCode: status}
+
+		w.Header().Set("Location", "/transactions/"+t.ID)
+		writeJSON(w, status, t)
 		return
 	}
 
-	w.Header().Set("Location", "/transactions/"+t.ID)
-	status := http.StatusAccepted
-	writeJSON(w, status, t)
-
-	if key != "" { // we know that in the happy path the record does not exist yet
-		storeByKey(key, idemRecord{Hash: fp, Tr: t, StatusCode: status}, store)
+	// no key, no cache path
+	t := Transaction{
+		ID:            newID(),
+		FromAccountID: in.FromAccountID,
+		ToAccountID:   in.ToAccountID,
+		Amount:        in.Amount,
+		At:            time.Now().UTC(),
+		Status:        StatusPending,
 	}
-	return
+	store.MuTransactions.Lock()
+	store.Transactions[t.ID] = t
+	store.MuTransactions.Unlock()
+
+	w.Header().Set("Location", "/transactions/"+t.ID)
+	writeJSON(w, status, t)
 }
 
 func getTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWithIdempotency) {
@@ -266,25 +285,6 @@ func getTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWithI
 }
 
 // Logic
-
-func processNewTransaction(fromAccountID, toAccountID string, amount float64, store *conStoreWithIdempotency) (Transaction, error) {
-	id := newID()
-
-	t := Transaction{
-		ID:            id,
-		FromAccountID: fromAccountID,
-		ToAccountID:   toAccountID,
-		Amount:        amount,
-		At:            time.Now().UTC(),
-		Status:        StatusPending,
-	}
-
-	store.MuTransactions.Lock()
-	store.Transactions[id] = t
-	store.MuTransactions.Unlock()
-
-	return t, nil
-}
 
 func validateTransactionRequest(req transactionRequest) error {
 	var invalids []string
