@@ -5,6 +5,7 @@ use (
 	./ch9bank2
 	./ch9bank3
 	./ch9bank4
+	./fintechapi
 	./fitsessionapi
 	./postapi
 )
