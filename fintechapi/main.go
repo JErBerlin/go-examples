@@ -17,7 +17,9 @@ const (
 	port = ":8080"
 )
 
-// conStore is an in-memory concurrency safe tore guarded by an RWmutex
+// persistency and exchange types
+
+// conStore is an in-memory concurrency-safe store guarded by an RWmutex
 type conStore struct {
 	MuTransactions sync.RWMutex
 	Transactions   map[string]Transaction
@@ -27,6 +29,27 @@ func NewConStore() *conStore {
 	store := &conStore{
 		MuTransactions: sync.RWMutex{},
 		Transactions:   make(map[string]Transaction),
+	}
+
+	return store
+}
+
+// conStoreWithCache is an in-memory concurrency-safe store guarded by an RWmutex
+// with a mechanism to use idempotency keys
+type conStoreWithIdempotency struct {
+	*conStore
+	idemCache map[string]Transaction
+}
+
+func NewConStoreWithIdempotency() *conStoreWithIdempotency {
+	storeWithMutex := &conStore{
+		MuTransactions: sync.RWMutex{},
+		Transactions:   make(map[string]Transaction),
+	}
+
+	store := &conStoreWithIdempotency{
+		storeWithMutex,
+		make(map[string]Transaction),
 	}
 
 	return store
@@ -131,7 +154,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // setupAndRouting sets up the in-memory store and the server, and register the routes.
 func setupAndRouting() *http.ServeMux {
 	// setup in-memory, concurrency safe store
-	store := NewConStore()
+	store := NewConStoreWithIdempotency()
 	// setup server
 	mux := http.NewServeMux()
 
@@ -149,36 +172,61 @@ func setupAndRouting() *http.ServeMux {
 	return mux
 }
 
-func createTransaction(w http.ResponseWriter, r *http.Request, store *conStore) {
-	var in struct {
-		FromAccountID string  `json:"from_account_id"`
-		ToAccountID   string  `json:"to_account_id"`
-		Amount        float64 `json:"amount"`
-	}
+
+type transactionRequest struct {
+	FromAccountID string  `json:"from_account_id"`
+	ToAccountID   string  `json:"to_account_id"`
+	Amount        float64 `json:"amount"`
+}
+
+func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWithIdempotency) {
+	key := r.Header.Get("Idempotency-Key") // idempotency-key is optional
+
+	var in transactionRequest
 
 	if err := bindJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 
-	if in.Amount <= 0 {
-		writeError(w, http.StatusBadRequest, "amount must be positive")
+	err := validateTransactionRequest(in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	t, err := processNewTransaction(in.FromAccountID, in.ToAccountID, in.Amount, store)
+	// lookup in cache in case
+	if key != "" {
+		cached, ok := loadByKey(key, store)
+		if ok {
+			// error conflict if the new payload diffferent from cached payload
+			if in.Amount != cached.Amount ||
+				in.FromAccountID != cached.FromAccountID ||
+				in.ToAccountID != cached.ToAccountID {
+				writeError(w, http.StatusConflict, "idempotency key reuse with different payload")
+				return
+			}
 
+			// else return the original result
+			w.Header().Set("Location", "/transactions/"+cached.ID)
+			writeJSON(w, http.StatusAccepted, cached)
+			return
+		}
+	}
+
+	t, err := processNewTransaction(in.FromAccountID, in.ToAccountID, in.Amount, store)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "transaction could not be accepted for processing")
 		return
 	}
+	storeByKey(key, t, store)
 
 	w.Header().Set("Location", "/transactions/"+t.ID)
 	writeJSON(w, http.StatusAccepted, t)
 	return
 }
 
-func getTransaction(w http.ResponseWriter, r *http.Request, store *conStore) {
+func getTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWithIdempotency) {
 	id := r.PathValue("id")
 	if strings.TrimSpace(id) == "" {
 		writeError(w, http.StatusBadRequest, "missing id")
@@ -200,7 +248,7 @@ func getTransaction(w http.ResponseWriter, r *http.Request, store *conStore) {
 
 // Logic
 
-func processNewTransaction(fromAccountID, toAccountID string, amount float64, store *conStore) (Transaction, error) {
+func processNewTransaction(fromAccountID, toAccountID string, amount float64, store *conStoreWithIdempotency) (Transaction, error) {
 	id := newID()
 
 	t := Transaction{
@@ -217,4 +265,39 @@ func processNewTransaction(fromAccountID, toAccountID string, amount float64, st
 	store.MuTransactions.Unlock()
 
 	return t, nil
+}
+
+func validateTransactionRequest(req transactionRequest) error {
+	var invalids []string
+
+	if strings.TrimSpace(req.FromAccountID) == "" {
+		invalids = append(invalids, "from_account_id")
+	}
+	if strings.TrimSpace(req.ToAccountID) == "" {
+		invalids = append(invalids, "to_account_id")
+	}
+	if req.Amount <= 0 {
+		invalids = append(invalids, "amount")
+	}
+
+	if len(invalids) > 0 {
+		return fmt.Errorf("invalid or missing: %s", strings.Join(invalids, ", "))
+	}
+	return nil
+
+}
+
+// loadByKey returns a previously stored transaction by idempotency key
+func loadByKey(key string, store *conStoreWithIdempotency) (Transaction, bool) {
+	store.MuTransactions.RLock()
+	t, ok := store.idemCache[key]
+	store.MuTransactions.RUnlock()
+	return t, ok
+}
+
+// storeByKey stores a transaction in the cache by idempotency key
+func storeByKey(key string, t Transaction, store *conStoreWithIdempotency) {
+	store.MuTransactions.Lock()
+	store.idemCache[key] = t
+	store.MuTransactions.Unlock()
 }
