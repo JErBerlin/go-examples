@@ -2,10 +2,12 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,11 +36,17 @@ func NewConStore() *conStore {
 	return store
 }
 
+type idemRecord struct {
+	Hash       string
+	Tr         Transaction
+	StatusCode int
+}
+
 // conStoreWithCache is an in-memory concurrency-safe store guarded by an RWmutex
 // with a mechanism to use idempotency keys
 type conStoreWithIdempotency struct {
 	*conStore
-	idemCache map[string]Transaction
+	idemCache map[string]idemRecord
 }
 
 func NewConStoreWithIdempotency() *conStoreWithIdempotency {
@@ -49,7 +57,7 @@ func NewConStoreWithIdempotency() *conStoreWithIdempotency {
 
 	store := &conStoreWithIdempotency{
 		storeWithMutex,
-		make(map[string]Transaction),
+		make(map[string]idemRecord),
 	}
 
 	return store
@@ -103,11 +111,11 @@ func (ts *TransactionStatus) UnmarshalJSON(data []byte) error {
 
 	switch s {
 	case "pending":
-		*ts = 0
+		*ts = StatusPending
 	case "completed":
-		*ts = 1
+		*ts = StatusCompleted
 	case "failed":
-		*ts = 2
+		*ts = StatusFailed
 	default:
 		return fmt.Errorf("invalid status: %q", s)
 	}
@@ -186,7 +194,6 @@ type transactionRequest struct {
 
 func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWithIdempotency) {
 	key := r.Header.Get("Idempotency-Key") // idempotency-key is optional
-
 	var in transactionRequest
 
 	if err := bindJSON(r, &in); err != nil {
@@ -200,21 +207,24 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 		return
 	}
 
-	// lookup in cache in case
+	fp, err := fingerprint(in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not calculate fingerprint of transaction request")
+		return
+	}
+
+	// lookup in cache when idempotency key is present
 	if key != "" {
-		cached, ok := loadByKey(key, store)
-		if ok {
-			// error conflict if the new payload diffferent from cached payload
-			if in.Amount != cached.Amount ||
-				in.FromAccountID != cached.FromAccountID ||
-				in.ToAccountID != cached.ToAccountID {
+		if rec, ok := loadByKey(key, store); ok {
+			// error conflict if the new payload different from cached payload
+			if rec.Hash != fp {
 				writeError(w, http.StatusConflict, "idempotency key reuse with different payload")
 				return
 			}
 
 			// else return the original result
-			w.Header().Set("Location", "/transactions/"+cached.ID)
-			writeJSON(w, http.StatusAccepted, cached)
+			w.Header().Set("Location", "/transactions/"+rec.Tr.ID)
+			writeJSON(w, rec.StatusCode, rec.Tr)
 			return
 		}
 	}
@@ -224,10 +234,14 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 		writeError(w, http.StatusInternalServerError, "transaction could not be accepted for processing")
 		return
 	}
-	storeByKey(key, t, store)
 
 	w.Header().Set("Location", "/transactions/"+t.ID)
-	writeJSON(w, http.StatusAccepted, t)
+	status := http.StatusAccepted
+	writeJSON(w, status, t)
+
+	if key != "" { // we know that in the happy path the record does not exist yet
+		storeByKey(key, idemRecord{Hash: fp, Tr: t, StatusCode: status}, store)
+	}
 	return
 }
 
@@ -278,33 +292,43 @@ func validateTransactionRequest(req transactionRequest) error {
 	if strings.TrimSpace(req.FromAccountID) == "" {
 		invalids = append(invalids, "from_account_id")
 	}
-	if strings.TrimSpace(req.ToAccountID) == "" {
+	if strings.TrimSpace(req.ToAccountID) == "" || strings.TrimSpace(req.FromAccountID) == strings.TrimSpace(req.ToAccountID) {
 		invalids = append(invalids, "to_account_id")
 	}
-	if req.Amount <= 0 {
+	if req.Amount <= 0 || math.IsNaN(req.Amount) || math.IsInf(req.Amount, 0) {
 		invalids = append(invalids, "amount")
 	}
 
 	if len(invalids) > 0 {
 		return fmt.Errorf("invalid or missing: %s", strings.Join(invalids, ", "))
 	}
-	return nil
 
+	return nil
 }
 
 // helper functions
 
 // loadByKey returns a previously stored transaction by idempotency key
-func loadByKey(key string, store *conStoreWithIdempotency) (Transaction, bool) {
+func loadByKey(key string, store *conStoreWithIdempotency) (idemRecord, bool) {
 	store.MuTransactions.RLock()
-	t, ok := store.idemCache[key]
+	rec, ok := store.idemCache[key]
 	store.MuTransactions.RUnlock()
-	return t, ok
+	return rec, ok
 }
 
 // storeByKey stores a transaction in the cache by idempotency key
-func storeByKey(key string, t Transaction, store *conStoreWithIdempotency) {
+func storeByKey(key string, rec idemRecord, store *conStoreWithIdempotency) {
 	store.MuTransactions.Lock()
-	store.idemCache[key] = t
+	store.idemCache[key] = rec
 	store.MuTransactions.Unlock()
+}
+
+func fingerprint(req transactionRequest) (string, error) {
+	b, err := json.Marshal(req) // field order must be stable (this is assured in Go)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+
+	return hex.EncodeToString(sum[:]), nil
 }
