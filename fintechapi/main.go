@@ -55,6 +55,8 @@ func NewConStoreWithIdempotency() *conStoreWithIdempotency {
 	return store
 }
 
+// Main program
+
 func main() {
 	mux := setupAndRouting()
 
@@ -122,6 +124,8 @@ type Transaction struct {
 	Status        TransactionStatus `json:"status"`
 }
 
+// helper functions
+
 func newID() string {
 	var b [16]byte
 	_, err := rand.Read(b[:])
@@ -172,6 +176,7 @@ func setupAndRouting() *http.ServeMux {
 	return mux
 }
 
+// transactions
 
 type transactionRequest struct {
 	FromAccountID string  `json:"from_account_id"`
@@ -286,6 +291,8 @@ func validateTransactionRequest(req transactionRequest) error {
 	return nil
 
 }
+
+// helper functions
 
 // loadByKey returns a previously stored transaction by idempotency key
 func loadByKey(key string, store *conStoreWithIdempotency) (Transaction, bool) {
