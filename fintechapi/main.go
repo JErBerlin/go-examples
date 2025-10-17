@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -61,16 +62,42 @@ func (ts TransactionStatus) String() string {
 	return statusName[ts]
 }
 
-type Transaction struct {
-	ID              string
-	From_account_id string
-	To_account_id   string
-	Amount          float64
-	At              time.Time
-	Status          TransactionStatus
+func (ts TransactionStatus) MarshalJSON() ([]byte, error) {
+	s, ok := statusName[ts]
+	if !ok {
+		return nil, fmt.Errorf("invalid status: %d", ts)
+	}
+	return json.Marshal(s)
 }
 
-// helper functions
+func (ts *TransactionStatus) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("status must be a string: %w", err)
+	}
+
+	switch s {
+	case "pending":
+		*ts = 0
+	case "completed":
+		*ts = 1
+	case "failed":
+		*ts = 2
+	default:
+		return fmt.Errorf("invalid status: %q", s)
+	}
+
+	return nil
+}
+
+type Transaction struct {
+	ID            string            `json:"id"`
+	FromAccountID string            `json:"from_account_id"`
+	ToAccountID   string            `json:"to_account_id"`
+	Amount        float64           `json:"amount"`
+	At            time.Time         `json:"at"` // RFC3339 by default
+	Status        TransactionStatus `json:"status"`
+}
 
 func newID() string {
 	var b [16]byte
@@ -176,12 +203,12 @@ func processNewTransaction(fromAccountID, toAccountID string, amount float64, st
 	id := newID()
 
 	t := Transaction{
-		ID:              id,
-		From_account_id: from_account_id,
-		To_account_id:   to_account_id,
-		Amount:          amount,
-		At:              time.Now().UTC(),
-		Status:          StatusPending,
+		ID:            id,
+		FromAccountID: fromAccountID,
+		ToAccountID:   toAccountID,
+		Amount:        amount,
+		At:            time.Now().UTC(),
+		Status:        StatusPending,
 	}
 
 	store.MuTransactions.Lock()
