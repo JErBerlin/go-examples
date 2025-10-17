@@ -16,14 +16,23 @@ const (
 	port = ":8080"
 )
 
-var (
-	// in-memory store (guarded by mutex)
-	muTransactions sync.Mutex
-	transactions   = make(map[string]Transaction)
-)
+// conStore is an in-memory concurrency safe tore guarded by an RWmutex
+type conStore struct {
+	MuTransactions sync.RWMutex
+	Transactions   map[string]Transaction
+}
+
+func NewConStore() *conStore {
+	store := &conStore{
+		MuTransactions: sync.RWMutex{},
+		Transactions:   make(map[string]Transaction),
+	}
+
+	return store
+}
 
 func main() {
-	mux := registerRoutes()
+	mux := setupAndRouting()
 
 	log.Println("listening on " + port)
 	if err := http.ListenAndServe(port, mux); err != nil {
@@ -91,22 +100,32 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 // Routing and Handlers
-
-func registerRoutes() *http.ServeMux {
+// setupAndRouting sets up the in-memory store and the server, and register the routes.
+func setupAndRouting() *http.ServeMux {
+	// setup in-memory, concurrency safe store
+	store := NewConStore()
+	// setup server
 	mux := http.NewServeMux()
 
+	// Handlers
+	// The store is injected into the handlers that need it.
+
 	// transactions
-	mux.HandleFunc("POST /transactions", createTransaction)
-	mux.HandleFunc("GET /transactions/{id}", getTransaction)
+	mux.HandleFunc("POST /transactions", func(w http.ResponseWriter, r *http.Request) {
+		createTransaction(w, r, store)
+	})
+	mux.HandleFunc("GET /transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		getTransaction(w, r, store)
+	})
 
 	return mux
 }
 
-func createTransaction(w http.ResponseWriter, r *http.Request) {
+func createTransaction(w http.ResponseWriter, r *http.Request, store *conStore) {
 	var in struct {
-		From_account_id string  `json:"from_account_id"`
-		To_account_id   string  `json:"to_account_id"`
-		Amount          float64 `json:"amount"`
+		FromAccountID string  `json:"from_account_id"`
+		ToAccountID   string  `json:"to_account_id"`
+		Amount        float64 `json:"amount"`
 	}
 
 	if err := bindJSON(r, &in); err != nil {
@@ -119,7 +138,7 @@ func createTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, err := processNewTransaction(in.From_account_id, in.To_account_id, in.Amount)
+	t, err := processNewTransaction(in.FromAccountID, in.ToAccountID, in.Amount, store)
 
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "transaction could not be accepted for processing")
@@ -131,16 +150,16 @@ func createTransaction(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func getTransaction(w http.ResponseWriter, r *http.Request) {
+func getTransaction(w http.ResponseWriter, r *http.Request, store *conStore) {
 	id := r.PathValue("id")
 	if strings.TrimSpace(id) == "" {
 		writeError(w, http.StatusBadRequest, "missing id")
 		return
 	}
 
-	muTransactions.Lock()
-	t, ok := transactions[id]
-	muTransactions.Unlock()
+	store.MuTransactions.RLock()
+	t, ok := store.Transactions[id]
+	store.MuTransactions.RUnlock()
 
 	if !ok {
 		writeError(w, http.StatusNotFound, "this payment does not exist")
@@ -153,7 +172,7 @@ func getTransaction(w http.ResponseWriter, r *http.Request) {
 
 // Logic
 
-func processNewTransaction(from_account_id, to_account_id string, amount float64) (Transaction, error) {
+func processNewTransaction(fromAccountID, toAccountID string, amount float64, store *conStore) (Transaction, error) {
 	id := newID()
 
 	t := Transaction{
@@ -165,9 +184,9 @@ func processNewTransaction(from_account_id, to_account_id string, amount float64
 		Status:          StatusPending,
 	}
 
-	muTransactions.Lock()
-	transactions[id] = t
-	muTransactions.Unlock()
+	store.MuTransactions.Lock()
+	store.Transactions[id] = t
+	store.MuTransactions.Unlock()
 
 	return t, nil
 }
