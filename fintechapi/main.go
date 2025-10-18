@@ -47,20 +47,51 @@ type idemRecord struct {
 type conStoreWithIdempotency struct {
 	*conStore
 	idemCache map[string]idemRecord
+	keyLocks  *lockRegistry
 }
 
 func NewConStoreWithIdempotency() *conStoreWithIdempotency {
-	storeWithMutex := &conStore{
-		MuTransactions: sync.RWMutex{},
-		Transactions:   make(map[string]Transaction),
+	return &conStoreWithIdempotency{
+		conStore:  &conStore{Transactions: make(map[string]Transaction)},
+		idemCache: make(map[string]idemRecord),
+		keyLocks:  newLockRegistry(),
 	}
+}
 
-	store := &conStoreWithIdempotency{
-		storeWithMutex,
-		make(map[string]idemRecord),
+type keyLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+type lockRegistry struct {
+	mu sync.Mutex
+	m  map[string]*keyLock
+}
+
+func newLockRegistry() *lockRegistry {
+	return &lockRegistry{m: make(map[string]*keyLock)}
+}
+
+func (r *lockRegistry) acquire(key string) (unlock func()) {
+	r.mu.Lock()
+	kl, ok := r.m[key]
+	if !ok {
+		kl = &keyLock{}
+		r.m[key] = kl
 	}
+	kl.refs++
+	r.mu.Unlock()
+	kl.mu.Lock() // serialize same-key requests
 
-	return store
+	return func() {
+		kl.mu.Unlock()
+		r.mu.Lock()
+		kl.refs--
+		if kl.refs == 0 {
+			delete(r.m, key)
+		}
+		r.mu.Unlock()
+	}
 }
 
 // Main program
@@ -215,22 +246,26 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 
 	// lookup in cache when idempotency key is present
 	status := http.StatusAccepted
+
 	if key != "" {
+		// Serialize only same-key requests
+		unlockKey := store.keyLocks.acquire(key)
+		defer unlockKey()
+
+		// locked idempotency check/insert:
 		store.MuTransactions.Lock()
 		defer store.MuTransactions.Unlock()
+
 		if rec, ok := store.idemCache[key]; ok {
-			// error conflict if the new payload different from cached payload
 			if rec.Hash != fp {
 				writeError(w, http.StatusConflict, "idempotency key reuse with different payload")
 				return
 			}
-			// else return the original result exactly
 			w.Header().Set("Location", "/transactions/"+rec.Tr.ID)
 			writeJSON(w, rec.StatusCode, rec.Tr)
 			return
 		}
 
-		// cache miss: create transaction and store it while lock
 		t := Transaction{
 			ID:            newID(),
 			FromAccountID: in.FromAccountID,
@@ -247,7 +282,7 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 		return
 	}
 
-	// no key, no cache path
+	// No key: normal path (no per-key lock)
 	t := Transaction{
 		ID:            newID(),
 		FromAccountID: in.FromAccountID,
@@ -256,10 +291,10 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 		At:            time.Now().UTC(),
 		Status:        StatusPending,
 	}
+
 	store.MuTransactions.Lock()
 	store.Transactions[t.ID] = t
 	store.MuTransactions.Unlock()
-
 	w.Header().Set("Location", "/transactions/"+t.ID)
 	writeJSON(w, status, t)
 }
