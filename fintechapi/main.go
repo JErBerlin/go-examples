@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,7 +17,9 @@ import (
 )
 
 const (
-	port = ":8080"
+	port          = ":8080"
+	idemTTL       = 24 * time.Hour
+	sweepInterval = 5 * time.Minute
 )
 
 // persistency and exchange types
@@ -40,6 +43,7 @@ type idemRecord struct {
 	Hash       string
 	Tr         Transaction
 	StatusCode int
+	CreatedAt  time.Time
 }
 
 // conStoreWithCache is an in-memory concurrency-safe store guarded by an RWmutex
@@ -94,10 +98,33 @@ func (r *lockRegistry) acquire(key string) (unlock func()) {
 	}
 }
 
+func startCacheSweeper(ctx context.Context, s *conStoreWithIdempotency) {
+	ticker := time.NewTicker(sweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			s.MuTransactions.Lock()
+			for k, rec := range s.idemCache {
+				if now.Sub(rec.CreatedAt) > idemTTL {
+					delete(s.idemCache, k)
+				}
+
+			}
+			s.MuTransactions.Unlock()
+		}
+	}
+}
+
 // Main program
 
 func main() {
-	mux := setupAndRouting()
+	mux, cancel := setupAndRouting()
+	defer cancel()
 
 	log.Println("listening on " + port)
 	if err := http.ListenAndServe(port, mux); err != nil {
@@ -195,11 +222,14 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // Routing and Handlers
 // setupAndRouting sets up the in-memory store and the server, and register the routes.
-func setupAndRouting() *http.ServeMux {
+func setupAndRouting() (*http.ServeMux, context.CancelFunc) {
 	// setup in-memory, concurrency safe store
 	store := NewConStoreWithIdempotency()
 	// setup server
 	mux := http.NewServeMux()
+	// setup cache sweeper
+	ctx, cancel := context.WithCancel(context.Background())
+	go startCacheSweeper(ctx, store)
 
 	// Handlers
 	// The store is injected into the handlers that need it.
@@ -212,7 +242,7 @@ func setupAndRouting() *http.ServeMux {
 		getTransaction(w, r, store)
 	})
 
-	return mux
+	return mux, cancel
 }
 
 // transactions
@@ -275,7 +305,7 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 			Status:        StatusPending,
 		}
 		store.Transactions[t.ID] = t
-		store.idemCache[key] = idemRecord{Hash: fp, Tr: t, StatusCode: status}
+		store.idemCache[key] = idemRecord{Hash: fp, Tr: t, StatusCode: status, CreatedAt: time.Now()}
 
 		w.Header().Set("Location", "/transactions/"+t.ID)
 		writeJSON(w, status, t)
