@@ -169,7 +169,7 @@ func TestAPI(t *testing.T) {
 		res1, body1 := postJSON(t, ts.URL+"/transactions", in, headers)
 		loc1 := res1.Header.Get("Location")
 		if res1.StatusCode != http.StatusAccepted || loc1 == "" {
-			t.Errorf("first call expected 202 with Location, got %d", res1.StatusCode)
+			t.Errorf("first call expected 202 with Location, got %d and location \"%s\"", res1.StatusCode, loc1)
 		}
 		res2, body2 := postJSON(t, ts.URL+"/transactions", in, headers)
 		loc2 := res2.Header.Get("Location")
