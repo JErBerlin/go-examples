@@ -17,7 +17,10 @@ import (
 )
 
 const (
-	port          = ":8080"
+	port = ":8080"
+)
+
+var (
 	idemTTL       = 24 * time.Hour
 	sweepInterval = 5 * time.Minute
 )
@@ -44,6 +47,8 @@ type idemRecord struct {
 	Tr         Transaction
 	StatusCode int
 	CreatedAt  time.Time
+	Body       []byte
+	Location   string
 }
 
 // conStoreWithCache is an in-memory concurrency-safe store guarded by an RWmutex
@@ -98,10 +103,9 @@ func (r *lockRegistry) acquire(key string) (unlock func()) {
 	}
 }
 
-func startCacheSweeper(ctx context.Context, s *conStoreWithIdempotency) {
-	ticker := time.NewTicker(sweepInterval)
+func startCacheSweeperWith(ctx context.Context, s *conStoreWithIdempotency, ttl, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,10 +114,9 @@ func startCacheSweeper(ctx context.Context, s *conStoreWithIdempotency) {
 			now := time.Now()
 			s.MuTransactions.Lock()
 			for k, rec := range s.idemCache {
-				if now.Sub(rec.CreatedAt) > idemTTL {
+				if now.Sub(rec.CreatedAt) > ttl {
 					delete(s.idemCache, k)
 				}
-
 			}
 			s.MuTransactions.Unlock()
 		}
@@ -229,7 +232,7 @@ func setupAndRouting() (*http.ServeMux, context.CancelFunc) {
 	mux := http.NewServeMux()
 	// setup cache sweeper
 	ctx, cancel := context.WithCancel(context.Background())
-	go startCacheSweeper(ctx, store)
+	go startCacheSweeper(ctx, store, idemTTL, sweepInterval)
 
 	// Handlers
 	// The store is injected into the handlers that need it.
@@ -291,8 +294,10 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 				writeError(w, http.StatusConflict, "idempotency key reuse with different payload")
 				return
 			}
-			w.Header().Set("Location", "/transactions/"+rec.Tr.ID)
-			writeJSON(w, rec.StatusCode, rec.Tr)
+			w.Header().Set("Location", rec.Location)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(rec.StatusCode)
+			_, _ = w.Write(rec.Body)
 			return
 		}
 
@@ -305,10 +310,21 @@ func createTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWi
 			Status:        StatusPending,
 		}
 		store.Transactions[t.ID] = t
-		store.idemCache[key] = idemRecord{Hash: fp, Tr: t, StatusCode: status, CreatedAt: time.Now()}
+		body, _ := json.Marshal(t)
+		loc := "/transactions/" + t.ID
+		store.idemCache[key] = idemRecord{
+			Hash:       fp,
+			Tr:         t,
+			StatusCode: status,
+			CreatedAt:  time.Now(),
+			Body:       body,
+			Location:   loc,
+		}
 
-		w.Header().Set("Location", "/transactions/"+t.ID)
-		writeJSON(w, status, t)
+		w.Header().Set("Location", loc)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
 		return
 	}
 
