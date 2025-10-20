@@ -398,7 +398,7 @@ func listTransactions(w http.ResponseWriter, r *http.Request, store *conStoreWit
 		}
 		items = append(items, t)
 	}
-	store.MusTransactions.RUnlock()
+	store.MuTransactions.RUnlock()
 
 	// Stort by (At ASC, ID ASC)
 	sort.Slice(items, func(i, j int) bool {
@@ -454,7 +454,7 @@ type trCursor struct {
 	FA string    `json:"fa"` // from account
 }
 
-func encodeCursor(c txCursor) (string, error) {
+func encodeCursor(c trCursor) (string, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return "", err
@@ -462,8 +462,8 @@ func encodeCursor(c txCursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func decodeCursor(s string) (txCursor, error) {
-	var c txCursor
+func decodeCursor(s string) (trCursor, error) {
+	var c trCursor
 	if strings.TrimSpace(s) == "" {
 		return c, nil
 	}
@@ -482,15 +482,15 @@ func decodeCursor(s string) (txCursor, error) {
 
 func parseLimit(q string) (int, error) {
 	if strings.TrimSpace(q) == "" {
-		return defaultLimit, nil
+		return defaultEntriesLimit, nil
 	}
 
 	n, err := strconv.Atoi(q)
 	if err != nil || n <= 0 {
 		return 0, fmt.Errorf("invalid limit")
 	}
-	if n > maxLimit {
-		n = maxLimit
+	if n > maxEntriesLimit {
+		n = maxEntriesLimit
 	}
 	return n, nil
 }
