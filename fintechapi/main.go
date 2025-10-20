@@ -248,6 +248,9 @@ func setupAndRouting() (*http.ServeMux, context.CancelFunc) {
 	mux.HandleFunc("GET /transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		getTransaction(w, r, store)
 	})
+	mux.HandleFunc("GET /transactions", func(w http.ResponseWriter, r *http.Request) {
+		listTransactions(w, r, store)
+	})
 
 	return mux, cancel
 }
