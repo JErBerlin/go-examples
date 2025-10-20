@@ -414,18 +414,18 @@ func listTransactions(w http.ResponseWriter, r *http.Request, store *conStoreWit
 		return items[i].ID < items[j].ID
 	})
 
-	// Apply keyset window
 	start := 0
-	if cur.At != (time.Time{}) {
-		// find first strictly after cursor
-		// linear scan is fine for in-mem; swap to binary search if needed
-		for idx := range items {
-			if afterCursor(items[idx], cur) {
-				start = idx
-				break
+	if !cur.At.IsZero() {
+		start = sort.Search(len(items), func(i int) bool {
+			// return true when items[i] > cursor
+			if items[i].At.After(cur.At) {
+				return true
 			}
-			start = len(items) // if none is after, empty page
-		}
+			if items[i].At.Equal(cur.At) && items[i].ID > cur.ID {
+				return true
+			}
+			return false
+		})
 	}
 
 	// Page slice
