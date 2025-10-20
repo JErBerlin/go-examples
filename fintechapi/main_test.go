@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -159,6 +160,7 @@ func TestAPI(t *testing.T) {
 	})
 
 	t.Run("Idempotency_SameKeySamePayload_ReturnsSameResponse", func(t *testing.T) {
+		t.Parallel()
 		ts, _ := newTestServer(t)
 		defer ts.Close()
 
@@ -260,6 +262,46 @@ func TestAPI(t *testing.T) {
 			t.Fatalf("expected transaction %s to exist", id)
 		}
 	})
+	t.Run("StrictJSONUnknownField_400", func(t *testing.T) {
+		t.Parallel()
+		ts, _ := newTestServer(t)
+		defer ts.Close()
+
+		in := map[string]any{
+			"from_account_id": "A1",
+			"to_account_id":   "A2",
+			"amount":          1.0,
+			"extra":           "nope", // unknown
+		}
+		res, body := postJSON(t, ts.URL+"/transactions", in, nil)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d body=%s", res.StatusCode, string(body))
+		}
+	})
+
+	t.Run("ResponseHeaders_ContentTypeAndLocation", func(t *testing.T) {
+		t.Parallel()
+		ts, _ := newTestServer(t)
+		defer ts.Close()
+
+		in := map[string]any{
+			"from_account_id": "A1",
+			"to_account_id":   "A2",
+			"amount":          10.0,
+		}
+		res, body := postJSON(t, ts.URL+"/transactions", in, nil)
+		if res.StatusCode != http.StatusAccepted {
+			t.Fatalf("expected 202, got %d body=%s", res.StatusCode, string(body))
+		}
+		if ct := res.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("expected Content-Type application/json, got %q", ct)
+		}
+		loc := res.Header.Get("Location")
+		if !strings.HasPrefix(loc, "/transactions/") || len(loc) <= len("/transactions/") {
+			t.Fatalf("invalid Location: %q", loc)
+		}
+	})
+
 }
 
 func BenchmarkCreate_NoKey(b *testing.B) {
@@ -337,4 +379,47 @@ func BenchmarkCreate_NoKey_Parallel(b *testing.B) {
 			res.Body.Close()
 		}
 	})
+}
+
+func TestIdempotency_TTLEviction(t *testing.T) {
+	// Build a custom server: same handlers, but our own sweeper with tiny TTL.
+	store := NewConStoreWithIdempotency()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /transactions", func(w http.ResponseWriter, r *http.Request) {
+		createTransaction(w, r, store)
+	})
+	mux.HandleFunc("GET /transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		getTransaction(w, r, store)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Start a short-lived sweeper
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ttl := 50 * time.Millisecond
+	interval := 20 * time.Millisecond
+	go startCacheSweeperWith(ctx, store, ttl, interval)
+
+	// Create via idempotency key
+	key := "ttl-key"
+	headers := map[string]string{"Idempotency-Key": key}
+	in := map[string]any{"from_account_id": "A1", "to_account_id": "A2", "amount": 10.0}
+	res, _ := postJSON(t, ts.URL+"/transactions", in, headers)
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", res.StatusCode)
+	}
+
+	// Wait > TTL and sweep interval
+	time.Sleep(150 * time.Millisecond)
+
+	// Reuse same key + same payload — cache should be gone, so this is treated as new
+	res2, _ := postJSON(t, ts.URL+"/transactions", in, headers)
+	if res2.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 on reinsert after eviction, got %d", res2.StatusCode)
+	}
+	// assert different Location to confirm a new transaction was created
+	if res.Header.Get("Location") == res2.Header.Get("Location") {
+		t.Fatalf("expected eviction to force a new transaction (different Location)")
+	}
 }
