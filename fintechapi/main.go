@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +19,9 @@ import (
 )
 
 const (
-	port = ":8080"
+	port                = ":8080"
+	defaultEntriesLimit = 20
+	maxEntriesLimit     = 100
 )
 
 var (
@@ -363,6 +367,143 @@ func getTransaction(w http.ResponseWriter, r *http.Request, store *conStoreWithI
 
 	writeJSON(w, http.StatusOK, t)
 	return
+}
+
+func listTransactions(w http.ResponseWriter, r *http.Request, store *conStoreWithIdempotency) {
+	from := strings.TrimSpace(r.URL.Query().Get("from_account_id"))
+	limit, err := parseLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid limit")
+		return
+	}
+
+	curStr := r.URL.Query().Get("cursor")
+	cur, err := decodeCursor(curStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// cursor/query mismatch check
+	if cur.FA != "" && cur.FA != from {
+		writeError(w, http.StatusBadRequest, "cursor does not match query")
+		return
+	}
+
+	// Snapshot under rread lock
+	store.MuTransactions.RLock()
+	items := make([]Transaction, 0, len(store.Transactions))
+	for _, t := range store.Transactions {
+		if from != "" && t.FromAccountID != from {
+			continue
+		}
+		items = append(items, t)
+	}
+	store.MusTransactions.RUnlock()
+
+	// Stort by (At ASC, ID ASC)
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].At.Before(items[j].At) {
+			return true
+		}
+		if items[i].At.After(items[j].At) {
+			return false
+		}
+		return items[i].ID < items[j].ID
+	})
+
+	// Apply keyset window
+	start := 0
+	if cur.At != (time.Time{}) {
+		// find first strictly after cursor
+		// linear scan is fine for in-mem; swap to binary search if needed
+		for idx := range items {
+			if afterCursor(items[idx], cur) {
+				start = idx
+				break
+			}
+			start = len(items) // if none is after, empty page
+		}
+	}
+
+	// Page slice
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	page := items[start:end]
+
+	// Build next cursor (only if more items remain)
+	next := ""
+	if end < len(items) && len(page) > 0 {
+		last := page[len(page)-1]
+		nc := trCursor{At: last.At.UTC(), ID: last.ID, FA: from}
+		if s, err := encodeCursor(nc); err == nil {
+			next = s
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":       page,
+		"next_cursor": next,
+	})
+}
+
+type trCursor struct {
+	At time.Time `json:"at"`
+	ID string    `json:"id"`
+	FA string    `json:"fa"` // from account
+}
+
+func encodeCursor(c txCursor) (string, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func decodeCursor(s string) (txCursor, error) {
+	var c txCursor
+	if strings.TrimSpace(s) == "" {
+		return c, nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return c, fmt.Errorf("invalid cursor encoding")
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return c, fmt.Errorf("invalid cursor payload")
+	}
+	if c.At.IsZero() || strings.TrimSpace(c.ID) == "" {
+		return c, fmt.Errorf("invalid cursor fields")
+	}
+	return c, nil
+}
+
+func parseLimit(q string) (int, error) {
+	if strings.TrimSpace(q) == "" {
+		return defaultLimit, nil
+	}
+
+	n, err := strconv.Atoi(q)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid limit")
+	}
+	if n > maxLimit {
+		n = maxLimit
+	}
+	return n, nil
+}
+
+func afterCursor(a Transaction, cur trCursor) bool {
+	// (At,ID) > (cur.At, cur.ID)
+	if a.At.After(cur.At) {
+		return true
+	}
+	if a.At.Equal(cur.At) && a.ID > cur.ID {
+		return true
+	}
+	return false
 }
 
 // Logic
