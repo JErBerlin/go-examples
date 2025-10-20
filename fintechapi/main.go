@@ -232,7 +232,7 @@ func setupAndRouting() (*http.ServeMux, context.CancelFunc) {
 	mux := http.NewServeMux()
 	// setup cache sweeper
 	ctx, cancel := context.WithCancel(context.Background())
-	go startCacheSweeper(ctx, store, idemTTL, sweepInterval)
+	go startCacheSweeperWith(ctx, store, idemTTL, sweepInterval)
 
 	// Handlers
 	// The store is injected into the handlers that need it.
