@@ -26,6 +26,9 @@ func newTestServer(t *testing.T) (*httptest.Server, *conStoreWithIdempotency) {
 	mux.HandleFunc("GET /transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		getTransaction(w, r, store)
 	})
+	mux.HandleFunc("GET /transactions", func(w http.ResponseWriter, r *http.Request) {
+		listTransactions(w, r, store)
+	})
 
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
@@ -421,5 +424,185 @@ func TestIdempotency_TTLEviction(t *testing.T) {
 	// assert different Location to confirm a new transaction was created
 	if res.Header.Get("Location") == res2.Header.Get("Location") {
 		t.Fatalf("expected eviction to force a new transaction (different Location)")
+	}
+}
+
+func TestListTransactions_FirstPageAndNextCursor(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	// Create 3 transactions from account A1, 1 from A2
+	headers := map[string]string{"Content-Type": "application/json"}
+	body := func(fa, ta string, amt float64) map[string]any {
+		return map[string]any{"from_account_id": fa, "to_account_id": ta, "amount": amt}
+	}
+	_, _ = postJSON(t, ts.URL+"/transactions", body("A1", "B1", 10), headers)
+	time.Sleep(time.Millisecond) // ensure At time ordering
+	_, _ = postJSON(t, ts.URL+"/transactions", body("A1", "B2", 11), headers)
+	time.Sleep(time.Millisecond)
+	_, _ = postJSON(t, ts.URL+"/transactions", body("A1", "B3", 12), headers)
+	_, _ = postJSON(t, ts.URL+"/transactions", body("A2", "B9", 99), headers)
+
+	// First page for A1 with limit=2
+	res, b1 := get(t, ts.URL+"/transactions?from_account_id=A1&limit=2")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", res.StatusCode)
+	}
+	var page1 struct {
+		Items      []Transaction `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(b1, &page1); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(page1.Items) != 2 || page1.NextCursor == "" {
+		t.Fatalf("expected 2 items and non-empty cursor, got %d, cursor=%q", len(page1.Items), page1.NextCursor)
+	}
+
+	// Second page using cursor
+	res2, b2 := get(t, ts.URL+"/transactions?from_account_id=A1&limit=2&cursor="+page1.NextCursor)
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", res2.StatusCode)
+	}
+	var page2 struct {
+		Items      []Transaction `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(b2, &page2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// No overlap between page1 and page2 IDs
+	idset := map[string]struct{}{}
+	for _, it := range page1.Items {
+		idset[it.ID] = struct{}{}
+	}
+	for _, it := range page2.Items {
+		if _, dup := idset[it.ID]; dup {
+			t.Fatalf("overlap between pages on ID %s", it.ID)
+		}
+	}
+	// Since we only had 3 for A1, page2 should have 1 item, and next_cursor should be empty.
+	if len(page2.Items) != 1 || page2.NextCursor != "" {
+		t.Fatalf("expected final page with 1 item and empty cursor, got %d, cursor=%q", len(page2.Items), page2.NextCursor)
+	}
+}
+
+func TestListTransactions_CursorQueryMismatch_400(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	// seed two txns for A1 so first page (limit=1) yields a next_cursor
+	_, _ = postJSON(t, ts.URL+"/transactions",
+		map[string]any{"from_account_id": "A1", "to_account_id": "B1", "amount": 10.0}, nil)
+	time.Sleep(time.Millisecond) // ensure distinct At
+	_, _ = postJSON(t, ts.URL+"/transactions",
+		map[string]any{"from_account_id": "A1", "to_account_id": "B2", "amount": 11.0}, nil)
+
+	// get first page for A1, get cursor
+	res, b1 := get(t, ts.URL+"/transactions?from_account_id=A1&limit=1")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%q", res.StatusCode, string(b1))
+	}
+	var p1 struct {
+		Items      []Transaction `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(b1, &p1); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, string(b1))
+	}
+	if len(p1.Items) != 1 || p1.NextCursor == "" {
+		t.Fatalf("expected 1 item and non-empty cursor, got %d, cursor=%q", len(p1.Items), p1.NextCursor)
+	}
+
+	// re-use the cursor but change from_account_id → should 400
+	res2, _ := get(t, ts.URL+"/transactions?from_account_id=A2&limit=1&cursor="+p1.NextCursor)
+	if res2.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 on cursor/query mismatch, got %d", res2.StatusCode)
+	}
+}
+
+func TestListTransactions_LimitParsing(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+	// seed
+	_, _ = postJSON(t, ts.URL+"/transactions", map[string]any{"from_account_id": "A1", "to_account_id": "B1", "amount": 10.0}, nil)
+
+	// invalid limit -> 400
+	res, _ := get(t, ts.URL+"/transactions?from_account_id=A1&limit=zero")
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400 for invalid limit, got %d", res.StatusCode)
+	}
+
+	// big limit -> clamped to max; we can only assert it's 200 OK and not erroring
+	res2, _ := get(t, ts.URL+"/transactions?from_account_id=A1&limit=1000000")
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("want 200 for big limit (clamped), got %d", res2.StatusCode)
+	}
+}
+
+func TestListTransactions_InsertBetweenPages_NoDuplicates(t *testing.T) {
+	ts, store := newTestServer(t)
+	defer ts.Close()
+
+	// create two for A1
+	_, _ = postJSON(t, ts.URL+"/transactions", map[string]any{"from_account_id": "A1", "to_account_id": "B1", "amount": 10.0}, nil)
+	time.Sleep(time.Millisecond)
+	_, _ = postJSON(t, ts.URL+"/transactions", map[string]any{"from_account_id": "A1", "to_account_id": "B2", "amount": 11.0}, nil)
+
+	// first page limit=1
+	res, b1 := get(t, ts.URL+"/transactions?from_account_id=A1&limit=1")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%q", res.StatusCode, string(b1))
+	}
+	var p1 struct {
+		Items      []Transaction `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(b1, &p1); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, string(b1))
+	}
+	if len(p1.Items) == 0 {
+		t.Fatalf("expected at least 1 item on first page")
+	}
+
+	// inject a NEWER transaction (after a tiny sleep so At is greater)
+	time.Sleep(2 * time.Millisecond)
+	_, _ = postJSON(t, ts.URL+"/transactions", map[string]any{"from_account_id": "A1", "to_account_id": "B3", "amount": 12.0}, nil)
+
+	// second page with cursor
+	res, b2 := get(t, ts.URL+"/transactions?from_account_id=A1&limit=2&cursor="+p1.NextCursor)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%q", res.StatusCode, string(b1))
+	}
+	var p2 struct {
+		Items      []Transaction `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(b2, &p2); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, string(b1))
+	}
+	if len(p2.Items) == 0 {
+		t.Fatalf("expected at least 1 item on first page")
+	}
+
+	// ensure we didn't duplicate the last item of page1
+	id0 := p1.Items[0].ID
+	for _, it := range p2.Items {
+		if it.ID == id0 {
+			t.Fatalf("duplicate item across pages: %s", id0)
+		}
+	}
+
+	// sanity: items belong to A1
+	store.MuTransactions.RLock()
+	defer store.MuTransactions.RUnlock()
+	for _, it := range p2.Items {
+		if it.FromAccountID != "A1" {
+			t.Fatalf("unexpected account in page2: %s", it.FromAccountID)
+		}
 	}
 }
