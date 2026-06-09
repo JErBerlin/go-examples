@@ -58,7 +58,7 @@ func main() {
 
 	// Sequencer / Fan-in consumer
 	for reply := range orderCh {
-		res := <-reply
+		res := <-reply // Blocks each channel in the exact order they were generated
 		handleResultOrdered(res)
 	}
 
