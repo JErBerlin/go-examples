@@ -1,6 +1,8 @@
 go 1.24.12
 
 use (
+	./ch8chantopo3
+	./ch8chantopo4
 	./ch8crawl1
 	./ch9bank1
 	./ch9bank2
