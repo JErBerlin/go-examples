@@ -1,6 +1,7 @@
-go 1.23.2
+go 1.24.12
 
 use (
+	./ch8crawl1
 	./ch9bank1
 	./ch9bank2
 	./ch9bank3
